@@ -29,8 +29,9 @@ import {
 	Group,
 	TorusGeometry,
 	OrthographicCamera,
-	Sphere,
+	Sphere, Vector3, Quaternion,
 } from 'three';
+import { GlobeControls } from './src/controls/GlobeControls.js';
 import { FlyOrbitControls } from './src/controls/FlyOrbitControls.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -44,9 +45,9 @@ const FIRST_HIT_ONLY = 2;
 
 const hashUrl = window.location.hash.replace( /^#/, '' );
 let camera, controls, scene, renderer, tiles, cameraHelper;
-let thirdPersonCamera, thirdPersonRenderer, thirdPersonControls;
-let secondRenderer, secondCameraHelper, secondControls, secondCamera;
-let orthoCamera, orthoCameraHelper;
+// let thirdPersonCamera, thirdPersonRenderer, thirdPersonControls;
+// let secondRenderer, secondCameraHelper, secondControls, secondCamera;
+// let orthoCamera, orthoCameraHelper;
 let box, sphere;
 let raycaster, mouse, rayIntersect, lastHoveredElement;
 let offsetParent, geospatialRotationParent;
@@ -83,9 +84,25 @@ const params = {
 init();
 animate();
 
+
+function rotationBetweenDirections( dir1, dir2 ) {
+
+	const rotation = new Quaternion();
+	const a = new Vector3().crossVectors( dir1, dir2 );
+	rotation.x = a.x;
+	rotation.y = a.y;
+	rotation.z = a.z;
+	rotation.w = 1 + dir1.clone().dot( dir2 );
+	rotation.normalize();
+
+	return rotation;
+
+}
+
 function reinstantiateTiles() {
 
-	const url = hashUrl || '../data/tileset.json';
+	// const url = hashUrl || '../data/tileset.json';
+	const url = 'https://demo3d.metromap.com.au/M0342_Sydney_75mm_Mar_2023/Scene/Cesium_Sydney.json';
 
 	if ( tiles ) {
 
@@ -95,6 +112,33 @@ function reinstantiateTiles() {
 	}
 
 	tiles = new TilesRenderer( url );
+
+	// tiles.onLoadTileSet = () => {
+
+	// 	// because ion examples typically are positioned on the planet surface we can orient
+	// 	// it such that up is Y+ and center the model
+	// 	const sphere = new Sphere();
+	// 	tiles.getBoundingSphere( sphere );
+
+	// 	const position = sphere.center.clone();
+	// 	const distanceToEllipsoidCenter = position.length();
+
+	// 	const surfaceDirection = position.normalize();
+	// 	const up = new Vector3( 0, 1, 0 );
+	// 	// const up = new Vector3( 0, 0, 1 );
+	// 	const rotationToNorthPole = rotationBetweenDirections( surfaceDirection, up );
+
+	// 	tiles.group.quaternion.x = rotationToNorthPole.x;
+	// 	tiles.group.quaternion.y = rotationToNorthPole.y;
+	// 	tiles.group.quaternion.z = rotationToNorthPole.z;
+	// 	tiles.group.quaternion.w = rotationToNorthPole.w;
+
+	// 	tiles.group.position.y = - distanceToEllipsoidCenter;
+
+	// 	console.log( tiles.group.position, tiles.group.quaternion );
+
+	// };
+
 
 	// Note the DRACO compression files need to be supplied via an explicit source.
 	// We use unpkg here but in practice should be provided by the application.
@@ -147,65 +191,69 @@ function init() {
 	renderer.domElement.tabIndex = 1;
 
 	camera = new PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 10000 );
-	camera.position.set( 400, 400, 400 );
+	// camera.position.set( 400, 400, 400 );
+	camera.position.set( - 4646163.02, 2553458.87, - 3534404.14 );
+	camera.lookAt( - 4646017.49, 2553378.89, - 3534292.69 );
+
 	cameraHelper = new CameraHelper( camera );
 	scene.add( cameraHelper );
 
-	orthoCamera = new OrthographicCamera();
-	orthoCameraHelper = new CameraHelper( orthoCamera );
-	scene.add( orthoCameraHelper );
+	// orthoCamera = new OrthographicCamera();
+	// orthoCameraHelper = new CameraHelper( orthoCamera );
+	// scene.add( orthoCameraHelper );
 
-	// secondary camera view
-	secondCamera = new PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 4000 );
-	secondCamera.position.set( 400, 400, - 400 );
-	secondCamera.lookAt( 0, 0, 0 );
+	// // secondary camera view
+	// secondCamera = new PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 4000 );
+	// secondCamera.position.set( 400, 400, - 400 );
+	// secondCamera.lookAt( 0, 0, 0 );
 
-	secondRenderer = new WebGLRenderer( { antialias: true } );
-	secondRenderer.setPixelRatio( window.devicePixelRatio );
-	secondRenderer.setSize( window.innerWidth, window.innerHeight );
-	secondRenderer.setClearColor( 0x151c1f );
+	// secondRenderer = new WebGLRenderer( { antialias: true } );
+	// secondRenderer.setPixelRatio( window.devicePixelRatio );
+	// secondRenderer.setSize( window.innerWidth, window.innerHeight );
+	// secondRenderer.setClearColor( 0x151c1f );
 
-	document.body.appendChild( secondRenderer.domElement );
-	secondRenderer.domElement.style.position = 'absolute';
-	secondRenderer.domElement.style.right = '0';
-	secondRenderer.domElement.style.top = '0';
-	secondRenderer.domElement.style.outline = '#0f1416 solid 2px';
-	secondRenderer.domElement.tabIndex = 1;
+	// document.body.appendChild( secondRenderer.domElement );
+	// secondRenderer.domElement.style.position = 'absolute';
+	// secondRenderer.domElement.style.right = '0';
+	// secondRenderer.domElement.style.top = '0';
+	// secondRenderer.domElement.style.outline = '#0f1416 solid 2px';
+	// secondRenderer.domElement.tabIndex = 1;
 
-	secondControls = new FlyOrbitControls( secondCamera, secondRenderer.domElement );
-	secondControls.screenSpacePanning = false;
-	secondControls.minDistance = 1;
-	secondControls.maxDistance = 5000;
+	// secondControls = new FlyOrbitControls( secondCamera, secondRenderer.domElement );
+	// secondControls.screenSpacePanning = false;
+	// secondControls.minDistance = 1;
+	// secondControls.maxDistance = 5000;
 
-	secondCameraHelper = new CameraHelper( secondCamera );
-	scene.add( secondCameraHelper );
+	// secondCameraHelper = new CameraHelper( secondCamera );
+	// scene.add( secondCameraHelper );
 
-	// Third person camera view
-	thirdPersonCamera = new PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 4000 );
-	thirdPersonCamera.position.set( 50, 40, 40 );
-	thirdPersonCamera.lookAt( 0, 0, 0 );
+	// // Third person camera view
+	// thirdPersonCamera = new PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 4000 );
+	// thirdPersonCamera.position.set( 50, 40, 40 );
+	// thirdPersonCamera.lookAt( 0, 0, 0 );
 
-	thirdPersonRenderer = new WebGLRenderer( { antialias: true } );
-	thirdPersonRenderer.setPixelRatio( window.devicePixelRatio );
-	thirdPersonRenderer.setSize( window.innerWidth, window.innerHeight );
-	thirdPersonRenderer.setClearColor( 0x0f1416 );
+	// thirdPersonRenderer = new WebGLRenderer( { antialias: true } );
+	// thirdPersonRenderer.setPixelRatio( window.devicePixelRatio );
+	// thirdPersonRenderer.setSize( window.innerWidth, window.innerHeight );
+	// thirdPersonRenderer.setClearColor( 0x0f1416 );
 
-	document.body.appendChild( thirdPersonRenderer.domElement );
-	thirdPersonRenderer.domElement.style.position = 'fixed';
-	thirdPersonRenderer.domElement.style.left = '5px';
-	thirdPersonRenderer.domElement.style.bottom = '5px';
-	thirdPersonRenderer.domElement.tabIndex = 1;
+	// document.body.appendChild( thirdPersonRenderer.domElement );
+	// thirdPersonRenderer.domElement.style.position = 'fixed';
+	// thirdPersonRenderer.domElement.style.left = '5px';
+	// thirdPersonRenderer.domElement.style.bottom = '5px';
+	// thirdPersonRenderer.domElement.tabIndex = 1;
 
-	thirdPersonControls = new FlyOrbitControls( thirdPersonCamera, thirdPersonRenderer.domElement );
-	thirdPersonControls.screenSpacePanning = false;
-	thirdPersonControls.minDistance = 1;
-	thirdPersonControls.maxDistance = 5000;
+	// thirdPersonControls = new FlyOrbitControls( thirdPersonCamera, thirdPersonRenderer.domElement );
+	// thirdPersonControls.screenSpacePanning = false;
+	// thirdPersonControls.minDistance = 1;
+	// thirdPersonControls.maxDistance = 5000;
 
 	// controls
-	controls = new FlyOrbitControls( camera, renderer.domElement );
-	controls.screenSpacePanning = false;
-	controls.minDistance = 1;
-	controls.maxDistance = 5000;
+	// controls = new FlyOrbitControls( camera, renderer.domElement );
+	// controls.screenSpacePanning = false;
+	// controls.minDistance = 1;
+	// controls.maxDistance = 5000;
+	controls = new GlobeControls( scene, camera, renderer.domElement, null );
 
 	// lights
 	const dirLight = new DirectionalLight( 0xffffff );
@@ -250,10 +298,10 @@ function init() {
 	renderer.domElement.addEventListener( 'pointerup', onPointerUp, false );
 	renderer.domElement.addEventListener( 'pointerleave', onPointerLeave, false );
 
-	secondRenderer.domElement.addEventListener( 'pointermove', onPointerMove, false );
-	secondRenderer.domElement.addEventListener( 'pointerdown', onPointerDown, false );
-	secondRenderer.domElement.addEventListener( 'pointerup', onPointerUp, false );
-	secondRenderer.domElement.addEventListener( 'pointerleave', onPointerLeave, false );
+	// secondRenderer.domElement.addEventListener( 'pointermove', onPointerMove, false );
+	// secondRenderer.domElement.addEventListener( 'pointerdown', onPointerDown, false );
+	// secondRenderer.domElement.addEventListener( 'pointerup', onPointerUp, false );
+	// secondRenderer.domElement.addEventListener( 'pointerleave', onPointerLeave, false );
 
 
 	// GUI
@@ -339,34 +387,34 @@ function init() {
 
 function onWindowResize() {
 
-	thirdPersonCamera.aspect = window.innerWidth / window.innerHeight;
-	thirdPersonCamera.updateProjectionMatrix();
-	thirdPersonRenderer.setSize( Math.floor( window.innerWidth / 3 ), Math.floor( window.innerHeight / 3 ) );
+	// thirdPersonCamera.aspect = window.innerWidth / window.innerHeight;
+	// thirdPersonCamera.updateProjectionMatrix();
+	// thirdPersonRenderer.setSize( Math.floor( window.innerWidth / 3 ), Math.floor( window.innerHeight / 3 ) );
 
 	if ( params.showSecondView ) {
 
 		camera.aspect = 0.5 * window.innerWidth / window.innerHeight;
 		renderer.setSize( 0.5 * window.innerWidth, window.innerHeight );
 
-		secondCamera.aspect = 0.5 * window.innerWidth / window.innerHeight;
-		secondRenderer.setSize( 0.5 * window.innerWidth, window.innerHeight );
-		secondRenderer.domElement.style.display = 'block';
+		// secondCamera.aspect = 0.5 * window.innerWidth / window.innerHeight;
+		// secondRenderer.setSize( 0.5 * window.innerWidth, window.innerHeight );
+		// secondRenderer.domElement.style.display = 'block';
 
 	} else {
 
 		camera.aspect = window.innerWidth / window.innerHeight;
 		renderer.setSize( window.innerWidth, window.innerHeight );
 
-		secondRenderer.domElement.style.display = 'none';
+		// secondRenderer.domElement.style.display = 'none';
 
 	}
 	camera.updateProjectionMatrix();
 	renderer.setPixelRatio( window.devicePixelRatio * params.resolutionScale );
 
-	secondCamera.updateProjectionMatrix();
-	secondRenderer.setPixelRatio( window.devicePixelRatio );
+	// secondCamera.updateProjectionMatrix();
+	// secondRenderer.setPixelRatio( window.devicePixelRatio );
 
-	updateOrthoCamera();
+	// updateOrthoCamera();
 
 }
 
@@ -407,13 +455,13 @@ function onPointerUp( e ) {
 
 	}
 
-	if ( lastHoveredElement === secondRenderer.domElement ) {
+	if ( false && lastHoveredElement === secondRenderer.domElement ) {
 
 		raycaster.setFromCamera( mouse, secondCamera );
 
 	} else {
 
-		raycaster.setFromCamera( mouse, params.orthographic ? orthoCamera : camera );
+		raycaster.setFromCamera( mouse, false && params.orthographic ? orthoCamera : camera );
 
 	}
 
@@ -476,6 +524,7 @@ function animate() {
 
 	requestAnimationFrame( animate );
 
+
 	// update options
 	tiles.errorTarget = params.errorTarget;
 	tiles.errorThreshold = params.errorThreshold;
@@ -497,11 +546,14 @@ function animate() {
 
 	} else {
 
-		tiles.deleteCamera( orthoCamera );
+		// tiles.deleteCamera( orthoCamera );
 		tiles.setCamera( camera );
 		tiles.setResolutionFromRenderer( camera, renderer );
 
+		controls.setTilesRenderer( tiles );
+
 	}
+	controls.update();
 
 	if ( params.showSecondView ) {
 
@@ -510,7 +562,7 @@ function animate() {
 
 	} else {
 
-		tiles.deleteCamera( secondCamera );
+		// tiles.deleteCamera( secondCamera );
 
 	}
 
@@ -554,7 +606,7 @@ function animate() {
 
 		if ( lastHoveredElement === renderer.domElement ) {
 
-			raycaster.setFromCamera( mouse, params.orthographic ? orthoCamera : camera );
+			raycaster.setFromCamera( mouse, false && params.orthographic ? orthoCamera : camera );
 
 		} else {
 
@@ -602,9 +654,9 @@ function animate() {
 	window.tiles = tiles;
 	if ( params.enableUpdate ) {
 
-		secondCamera.updateMatrixWorld();
+		// secondCamera.updateMatrixWorld();
 		camera.updateMatrixWorld();
-		orthoCamera.updateMatrixWorld();
+		// orthoCamera.updateMatrixWorld();
 		tiles.update();
 
 	}
@@ -616,11 +668,11 @@ function animate() {
 
 function render() {
 
-	updateOrthoCamera();
+	// updateOrthoCamera();
 
 	cameraHelper.visible = false;
-	orthoCameraHelper.visible = false;
-	secondCameraHelper.visible = false;
+	// orthoCameraHelper.visible = false;
+	// secondCameraHelper.visible = false;
 
 	// render primary view
 	if ( params.orthographic ) {
@@ -646,27 +698,27 @@ function render() {
 	}
 
 	// render third person view
-	thirdPersonRenderer.domElement.style.visibility = params.showThirdPerson ? 'visible' : 'hidden';
-	if ( params.showThirdPerson ) {
+	// thirdPersonRenderer.domElement.style.visibility = params.showThirdPerson ? 'visible' : 'hidden';
+	// if ( params.showThirdPerson ) {
 
-		cameraHelper.update();
-		cameraHelper.visible = ! params.orthographic;
+	// 	cameraHelper.update();
+	// 	cameraHelper.visible = ! params.orthographic;
 
-		orthoCameraHelper.update();
-		orthoCameraHelper.visible = params.orthographic;
+	// 	orthoCameraHelper.update();
+	// 	orthoCameraHelper.visible = params.orthographic;
 
-		if ( params.showSecondView ) {
+	// 	if ( params.showSecondView ) {
 
-			secondCameraHelper.update();
-			secondCameraHelper.visible = true;
+	// 		secondCameraHelper.update();
+	// 		secondCameraHelper.visible = true;
 
-		}
+	// 	}
 
-		const dist = thirdPersonCamera.position.distanceTo( rayIntersect.position );
-		rayIntersect.scale.setScalar( dist * thirdPersonCamera.fov / 6000 );
-		thirdPersonRenderer.render( scene, thirdPersonCamera );
+	// 	const dist = thirdPersonCamera.position.distanceTo( rayIntersect.position );
+	// 	rayIntersect.scale.setScalar( dist * thirdPersonCamera.fov / 6000 );
+	// 	thirdPersonRenderer.render( scene, thirdPersonCamera );
 
-	}
+	// }
 
 	const cacheFullness = tiles.lruCache.itemList.length / tiles.lruCache.maxSize;
 	let str = `Downloading: ${ tiles.stats.downloading } Parsing: ${ tiles.stats.parsing } Visible: ${ tiles.visibleTiles.size }`;

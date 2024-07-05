@@ -52,7 +52,11 @@ function reinstantiateTiles() {
 
 	localStorage.setItem( 'googleApiKey', params.apiKey );
 
+
 	tiles = new GoogleTilesRenderer( params.apiKey );
+	// const url = 'https://demo3d.metromap.com.au/M0342_Sydney_75mm_Mar_2023/Scene/Cesium_Sydney.json';
+	// tiles = new TilesRenderer( url );
+
 	tiles.group.rotation.x = - Math.PI / 2;
 	tiles.errorTarget = 50;
 
