@@ -9,7 +9,7 @@ import {
 	Vector3,
 } from 'three';
 import { TilesRenderer, EnvironmentControls } from '3d-tiles-renderer';
-import { DebugTilesPlugin, PotreePlugin } from '3d-tiles-renderer/plugins';
+import { DebugTilesPlugin, PotreePlugin, PointCloudEffectsPlugin, ImplicitTilingPlugin } from '3d-tiles-renderer/plugins';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 
 const POTREE_POINTCLOUDS = 'https://raw.githubusercontent.com/potree/potree/refs/heads/develop/pointclouds/';
@@ -19,6 +19,8 @@ const DATASETS = {
 	'heidentor': 'http://5.9.65.151/mschuetz/potree/resources/pointclouds/archpro/heidentor/cloud.js',
 	'retz': 'http://5.9.65.151/mschuetz/potree/resources/pointclouds/riegl/retz/cloud.js',
 	'vol total': `${ POTREE_POINTCLOUDS }vol_total/cloud.js`,
+	// the lion as a 3D Tiles 1.1 implicit ADD octree (glb + subtrees), sized by PointCloudEffectsPlugin's adaptivePointSize
+	'lion 3d tiles implicit': 'https://jo-chemla.github.io/3dtiles-samples/lion_takanawa/implicit-octree/tileset.json',
 };
 
 let camera, perspectiveCamera, orthographicCamera, controls, scene, renderer, tiles, potreePlugin;
@@ -30,13 +32,14 @@ const params = {
 	enable: true,
 	errorTarget: 1,
 	pointScale: 1,
+	adaptivePointSize: true,
 	pointShape: 'sphere',
 	edl: true,
 	edlStrength: 0.4,
 	edlRadius: 1.4,
 	debugColorMode: 'none',
 	displayBoxBounds: false,
-	dataset: 'lion',
+	dataset: new URLSearchParams( location.search ).get( 'dataset' ) ?? 'lion',
 };
 
 init();
@@ -130,6 +133,11 @@ function init() {
 
 	} );
 	const pointsFolder = gui.addFolder( 'points' );
+	pointsFolder.add( params, 'adaptivePointSize' ).name( 'adaptive size (3d tiles)' ).onChange( v => {
+
+		potreePlugin.adaptivePointSize = v;
+
+	} );
 	pointsFolder.add( params, 'pointScale', 0.25, 4 ).name( 'point scale' ).onChange( v => {
 
 		potreePlugin.pointScale = v;
@@ -182,9 +190,12 @@ function initTiles() {
 	}
 
 	// tiles
-	tiles = new TilesRenderer();
-	potreePlugin = new PotreePlugin( {
-		url: DATASETS[ params.dataset ],
+	const url = DATASETS[ params.dataset ];
+	const isTileset = /\.json$/.test( url );
+	tiles = new TilesRenderer( isTileset ? url : undefined );
+	potreePlugin = new ( isTileset ? PointCloudEffectsPlugin : PotreePlugin )( {
+		url,
+		adaptivePointSize: params.adaptivePointSize,
 		pointScale: params.pointScale,
 		pointShape: params.pointShape,
 		debugColorMode: params.debugColorMode,
@@ -192,6 +203,7 @@ function initTiles() {
 		edlRadius: params.edlRadius,
 	} );
 	tiles.registerPlugin( potreePlugin );
+	if ( isTileset ) tiles.registerPlugin( new ImplicitTilingPlugin() );
 	tiles.registerPlugin( new DebugTilesPlugin( { displayBoxBounds: params.displayBoxBounds } ) );
 	tiles.errorTarget = params.errorTarget;
 	tiles.setCamera( camera );
