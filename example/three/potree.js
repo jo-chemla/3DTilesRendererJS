@@ -138,22 +138,41 @@ function init() {
 	pointsFolder.add( params, 'adaptivePointSize' ).name( 'adaptive size (3d tiles)' ).onChange( v => {
 
 		potreePlugin.adaptivePointSize = v;
+		updateSizeControls();
 
 	} );
-	pointsFolder.add( params, 'pointScale', 0.25, 4 ).name( 'point scale' ).onChange( v => {
+	const pointScaleControl = pointsFolder.add( params, 'pointScale', 0.25, 4 ).name( 'point scale' ).onChange( v => {
 
 		potreePlugin.pointScale = v;
 
 	} );
 	// with adaptive off, 3D Tiles points have no world size, so the minimum is their fixed pixel size
-	pointsFolder.add( params, 'minPointSize', 1, 25, 1 ).name( 'fixed / min size (px)' ).onChange( v => {
+	const minSizeControl = pointsFolder.add( params, 'minPointSize', 1, 25, 1 ).onChange( v => {
 
 		potreePlugin.minPointSize = v;
 
 	} );
-	pointsFolder.add( params, 'maxPointSize', 0, 100, 1 ).name( 'max size (px)' ).onChange( v => {
+	const maxSizeControl = pointsFolder.add( params, 'maxPointSize', 0, 100, 1 ).name( 'max size (px)' ).onChange( v => {
 
 		potreePlugin.maxPointSize = v;
+
+	} );
+
+	// world size controls only apply to adaptive sizing (potree datasets are always adaptive)
+	function updateSizeControls() {
+
+		const adaptive = params.adaptivePointSize || ! /\.json$/.test( DATASETS[ params.dataset ] );
+		pointScaleControl.show( adaptive );
+		maxSizeControl.show( adaptive );
+		minSizeControl.name( adaptive ? 'min size (px)' : 'fixed size (px)' );
+
+	}
+
+	updateSizeControls();
+	gui.controllers.find( c => c.property === 'dataset' ).onChange( () => {
+
+		initTiles();
+		updateSizeControls();
 
 	} );
 	pointsFolder.add( params, 'pointShape', [ 'square', 'round', 'sphere' ] ).name( 'point shape' ).onChange( v => {
