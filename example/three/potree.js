@@ -32,6 +32,8 @@ const params = {
 	enable: true,
 	errorTarget: 1,
 	pointScale: 1,
+	minPointSize: 2,
+	maxPointSize: 50,
 	adaptivePointSize: true,
 	pointShape: 'sphere',
 	edl: true,
@@ -143,6 +145,17 @@ function init() {
 		potreePlugin.pointScale = v;
 
 	} );
+	// with adaptive off, 3D Tiles points have no world size, so the minimum is their fixed pixel size
+	pointsFolder.add( params, 'minPointSize', 1, 25, 1 ).name( 'fixed / min size (px)' ).onChange( v => {
+
+		potreePlugin.minPointSize = v;
+
+	} );
+	pointsFolder.add( params, 'maxPointSize', 0, 100, 1 ).name( 'max size (px)' ).onChange( v => {
+
+		potreePlugin.maxPointSize = v;
+
+	} );
 	pointsFolder.add( params, 'pointShape', [ 'square', 'round', 'sphere' ] ).name( 'point shape' ).onChange( v => {
 
 		potreePlugin.pointShape = v;
@@ -197,6 +210,8 @@ function initTiles() {
 		url,
 		adaptivePointSize: params.adaptivePointSize,
 		pointScale: params.pointScale,
+		minPointSize: params.minPointSize,
+		maxPointSize: params.maxPointSize,
 		pointShape: params.pointShape,
 		debugColorMode: params.debugColorMode,
 		edlStrength: params.edl ? params.edlStrength : 0,
