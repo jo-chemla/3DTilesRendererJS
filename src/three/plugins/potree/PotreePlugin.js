@@ -1,3 +1,4 @@
+/** @import { Matrix4 } from 'three' */
 import {
 	DataTexture,
 	NearestFilter,
@@ -13,6 +14,8 @@ import { PointCloudEffectsPlugin } from '../pointcloud/PointCloudEffectsPlugin.j
 // Points are drawn larger than the point spacing to cover the gaps between them - potree uses
 // the same factor
 const SPACING_COVERAGE_FACTOR = 1.7;
+
+const _column = /* @__PURE__ */ new Vector3();
 
 // Node key from a tile content uri, e.g. ".../r012.potree" -> "r012"
 function keyFromUri( uri ) {
@@ -89,10 +92,23 @@ function boxToMinMax( box ) {
  * Extends PointCloudEffectsPlugin, so the point shape, size clamping, eye dome lighting and
  * debug color options are available here too.
  *
+ * Other octree point formats laid out like Potree's (a cube halved per level, additive
+ * refinement, a point spacing halved per level, such as COPC) can reuse the plugin by passing
+ * their own `loader`. A loader exposes:
+ *
+ * - `fetchOptions` and `fetchData( url, options )`, which the plugin sets to route requests through the other plugins.
+ * - `load( url )`, resolving once `metadata` and the root of `hierarchy` are available.
+ * - `metadata`: `{ spacing, boundingBox: { min, max } }` in the dataset's own units.
+ * - `hierarchy`: a `Map` from node key ("r", "r0", "r07", ...: one octant digit per level, bit 2 = x, bit 1 = y, bit 0 = z) to `{ childMask }`. A node missing from it is treated as a leaf, so a loader can add deeper parts of the hierarchy as they load.
+ * - `loadNodeData( key, options )`, resolving to the node's raw buffer.
+ * - `parsePointData( buffer, key, min, max )`, returning `{ geometry, center }` with positions relative to `center`.
+ *
  * @param {Object} [options] PointCloudEffectsPlugin options plus the ones below.
  * @param {string|null} [options.url=null] Url of the dataset metadata file, `cloud.js` for v1 or `metadata.json` for v2. Falls back to `tiles.rootURL`.
  * @param {number} [options.pointScale=1] Multiplier on the point size. Can be adjusted after construction.
  * @param {boolean} [options.useRecommendedSettings=true] Whether to set the renderer error target to a value suited to point spacing based geometric error.
+ * @param {Object|null} [options.loader=null] Loader for the dataset, see above. Defaults to a Potree v1 / v2 loader.
+ * @param {Matrix4|Array<number>|Function|null} [options.rootTransform=null] Transform of the root tile, as a matrix, a column-major array of 16 numbers or a function of the loaded `metadata` returning either (or null). Its scale, assumed uniform, also scales the geometric error and the point size, which are otherwise in the dataset's units.
  */
 export class PotreePlugin extends PointCloudEffectsPlugin {
 
@@ -121,16 +137,22 @@ export class PotreePlugin extends PointCloudEffectsPlugin {
 			url = null,
 			pointScale = 1,
 			useRecommendedSettings = true,
+			loader = null,
+			rootTransform = null,
 		} = options;
 
 		this.name = 'POTREE_PLUGIN';
 		this.priority = - 1000;
 
 		this.url = url;
-		this.loader = null;
+		this.loader = loader;
+		this.rootTransform = rootTransform;
 		this.useRecommendedSettings = useRecommendedSettings;
 
 		this._pointScale = pointScale;
+
+		// the length of a dataset unit in the root tile's frame, from the scale of "rootTransform"
+		this._unitScale = 1;
 
 		// The active node hierarchy shared by every material: per texel the active-children
 		// octant mask (r) and the offset to the first child texel (g, b). Rebuilt after any
@@ -164,7 +186,7 @@ export class PotreePlugin extends PointCloudEffectsPlugin {
 		}
 
 		// route the loader requests through the other plugins
-		const loader = new PotreeLoader();
+		const loader = this.loader ?? new PotreeLoader();
 		loader.fetchOptions = tiles.fetchOptions;
 		loader.fetchData = ( url, options ) => {
 
@@ -206,17 +228,39 @@ export class PotreePlugin extends PointCloudEffectsPlugin {
 
 		await loader.load( metaUrl );
 
-		const { spacing, boundingBox } = loader.metadata;
+		const { metadata } = loader;
+		const { spacing, boundingBox } = metadata;
+		const root = {
+			refine: 'ADD',
+			geometricError: spacing,
+			boundingVolume: { box: makeBoundingBox( boundingBox.min, boundingBox.max ) },
+			content: { uri: 'r.potree' },
+			children: [],
+		};
+
+		// the transform has to be on the root before the tile set is preprocessed
+		let { rootTransform } = this;
+		if ( typeof rootTransform === 'function' ) {
+
+			rootTransform = rootTransform( metadata );
+
+		}
+
+		if ( rootTransform ) {
+
+			const elements = rootTransform.isMatrix4 ? rootTransform.elements : rootTransform;
+			root.transform = [ ...elements ];
+
+			// distances are measured in the transformed frame, so the error is scaled to it
+			this._unitScale = _column.fromArray( elements, 0 ).length();
+			root.geometricError = spacing * this._unitScale;
+
+		}
+
 		const tileset = {
 			asset: { version: '1.1' },
 			geometricError: Infinity,
-			root: {
-				refine: 'ADD',
-				geometricError: spacing,
-				boundingVolume: { box: makeBoundingBox( boundingBox.min, boundingBox.max ) },
-				content: { uri: 'r.potree' },
-				children: [],
-			},
+			root,
 		};
 
 		tiles.preprocessTileset( tileset, metaUrl.slice( 0, metaUrl.lastIndexOf( '/' ) + 1 ) );
@@ -249,10 +293,10 @@ export class PotreePlugin extends PointCloudEffectsPlugin {
 		const [ tileMin, tileMax ] = boxToMinMax( tile.boundingVolume.box );
 		const { geometry, center } = this.loader.parsePointData( buffer, key, tileMin, tileMax );
 
-		const { spacing, boundingBox } = this.loader.metadata;
+		const { boundingBox } = this.loader.metadata;
 		const material = new PointCloudMaterial( {
 			vertexColors: Boolean( geometry.attributes.color ),
-			size: spacing * SPACING_COVERAGE_FACTOR * this.pointScale,
+			size: this._getPointSize(),
 		} );
 		material.activeNodes = this._activeNodesTexture;
 		material.uniforms.uTileId.value = idFromKey( key );
@@ -290,6 +334,14 @@ export class PotreePlugin extends PointCloudEffectsPlugin {
 
 		const { loader } = this;
 		const node = loader.hierarchy.get( key );
+
+		// a node the hierarchy does not hold (yet) stays a leaf
+		if ( ! node ) {
+
+			return;
+
+		}
+
 		const [ parentMin, parentMax ] = boxToMinMax( tile.boundingVolume.box );
 		const childError = tile.geometricError / 2;
 
@@ -411,9 +463,16 @@ export class PotreePlugin extends PointCloudEffectsPlugin {
 
 		this.tiles.forEachLoadedModel( scene => {
 
-			scene.material.size = metadata.spacing * SPACING_COVERAGE_FACTOR * this.pointScale;
+			scene.material.size = this._getPointSize();
 
 		} );
+
+	}
+
+	// The point size: the node spacing, in the root tile's frame, enlarged to cover the gaps
+	_getPointSize() {
+
+		return this.loader.metadata.spacing * this._unitScale * SPACING_COVERAGE_FACTOR * this.pointScale;
 
 	}
 
