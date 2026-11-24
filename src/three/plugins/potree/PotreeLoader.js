@@ -138,8 +138,10 @@ function v1ParseInlineHierarchy( entries, hierarchy ) {
 }
 
 // Parse a v2 hierarchy.bin chunk into the given map: BFS-ordered entries of type(uint8) +
-// childMask(uint8) + numPoints(uint32) + byteOffset(int64) + byteSize(int64)
-function v2ParseHierarchy( buffer, rootKey, chunkStart, chunkSize, hierarchy ) {
+// childMask(uint8) + numPoints(uint32) + byteOffset(int64) + byteSize(int64). With a "proxies"
+// map, the sub-chunks that proxy entries point to are recorded there to be loaded later instead
+// of being parsed from the same buffer.
+function v2ParseHierarchy( buffer, rootKey, chunkStart, chunkSize, hierarchy, proxies = null ) {
 
 	const view = new DataView( buffer, chunkStart, chunkSize );
 	const queue = [ rootKey ];
@@ -157,7 +159,16 @@ function v2ParseHierarchy( buffer, rootKey, chunkStart, chunkSize, hierarchy ) {
 		// proxy entries reference a sub-chunk in the same file, parsed in place of the node
 		if ( type === 2 && i !== 0 ) {
 
-			v2ParseHierarchy( buffer, key, Number( byteOffset ), Number( byteSize ), hierarchy );
+			if ( proxies ) {
+
+				proxies.set( key, { start: Number( byteOffset ), size: Number( byteSize ) } );
+
+			} else {
+
+				v2ParseHierarchy( buffer, key, Number( byteOffset ), Number( byteSize ), hierarchy );
+
+			}
+
 			continue;
 
 		}
@@ -253,8 +264,14 @@ export class PotreeLoader {
 
 		this._dataDirUrl = null;
 		this._octreeUrl = null;
+		this._hierarchyUrl = null;
 		this._loadedChunks = null;
 		this._inlineHierarchy = false;
+
+		// v2 hierarchy sub-chunks not loaded yet, keyed by the node they start at, and the ones
+		// being loaded
+		this._proxies = null;
+		this._pendingChunks = null;
 
 	}
 
@@ -281,6 +298,84 @@ export class PotreeLoader {
 		}
 
 		return res.arrayBuffer();
+
+	}
+
+	// Fetches bytes [ start, start + size ) of the given url. Resolves to the requested bytes, or
+	// to the whole file with "whole" set when the server ignores the Range header and "allowWhole"
+	// is set. Otherwise a response that is not exactly the requested range is refused, since it
+	// would be parsed as the wrong bytes.
+	async _fetchRange( url, start, size, options, allowWhole = false ) {
+
+		const res = await this.fetchData( url, {
+			...options,
+			headers: {
+				...options.headers,
+				Range: `bytes=${ start }-${ start + size - 1 }`,
+			},
+		} );
+
+		if ( ! res.ok ) {
+
+			throw new Error( `PotreeLoader: Could not fetch "${ url }" with status ${ res.status }` );
+
+		}
+
+		if ( res.status !== 206 ) {
+
+			if ( allowWhole ) {
+
+				return { buffer: await res.arrayBuffer(), whole: true };
+
+			}
+
+			if ( res.body ) {
+
+				await res.body.cancel();
+
+			}
+
+			throw new Error( `PotreeLoader: The server ignored the Range request for "${ url }" (status ${ res.status }).` );
+
+		}
+
+		const buffer = await res.arrayBuffer();
+		if ( buffer.byteLength !== size ) {
+
+			throw new Error( `PotreeLoader: Expected ${ size } bytes from "${ url }" but received ${ buffer.byteLength }.` );
+
+		}
+
+		return { buffer, whole: false };
+
+	}
+
+	// Loads and parses the v2 hierarchy sub-chunk that starts at the given node
+	_loadHierarchyChunk( key ) {
+
+		const { _pendingChunks, _proxies } = this;
+		if ( ! _pendingChunks.has( key ) ) {
+
+			// requested without the node's abort signal, since other nodes depend on the chunk
+			const { start, size } = _proxies.get( key );
+			const promise = this._fetchRange( this._hierarchyUrl, start, size, this.fetchOptions )
+				.then( ( { buffer } ) => {
+
+					v2ParseHierarchy( buffer, key, 0, size, this.hierarchy, _proxies );
+					_proxies.delete( key );
+
+				} )
+				.finally( () => {
+
+					_pendingChunks.delete( key );
+
+				} );
+
+			_pendingChunks.set( key, promise );
+
+		}
+
+		return _pendingChunks.get( key );
 
 	}
 
@@ -320,11 +415,18 @@ export class PotreeLoader {
 
 		if ( version === 2 ) {
 
-			// the root hierarchy chunk spans the first "firstChunkSize" bytes of hierarchy.bin
+			// the root hierarchy chunk spans the first "firstChunkSize" bytes of hierarchy.bin, and
+			// the chunks below it are requested with the first node that needs them
 			this._octreeUrl = new URL( 'octree.bin', baseUrl ).href;
+			this._hierarchyUrl = new URL( 'hierarchy.bin', baseUrl ).href;
+			this._proxies = new Map();
+			this._pendingChunks = new Map();
 
-			const hierBuf = await this._fetchBuffer( new URL( 'hierarchy.bin', baseUrl ).href, this.fetchOptions );
-			v2ParseHierarchy( hierBuf, 'r', 0, json.hierarchy.firstChunkSize, this.hierarchy );
+			const { firstChunkSize } = json.hierarchy;
+			const { buffer, whole } = await this._fetchRange( this._hierarchyUrl, 0, firstChunkSize, this.fetchOptions, true );
+
+			// a server that ignores the Range header sends the whole file, which is parsed at once
+			v2ParseHierarchy( buffer, 'r', 0, firstChunkSize, this.hierarchy, whole ? null : this._proxies );
 
 		} else {
 
@@ -358,27 +460,27 @@ export class PotreeLoader {
 	 */
 	async loadNodeData( key, options = {} ) {
 
-		const node = this.hierarchy.get( key );
 		const fetchOptions = { ...this.fetchOptions, ...options };
 
 		if ( this.version === 2 ) {
 
+			// a node at the top of a hierarchy chunk is only known once the chunk has loaded
+			if ( this._proxies.has( key ) ) {
+
+				await this._loadHierarchyChunk( key );
+
+			}
+
 			// nodes with no data hold no byte range to request
+			const node = this.hierarchy.get( key );
 			if ( node.byteSize === 0n ) {
 
 				return new ArrayBuffer( 0 );
 
 			}
 
-			const start = node.byteOffset;
-			const end = node.byteOffset + node.byteSize - 1n;
-			return this._fetchBuffer( this._octreeUrl, {
-				...fetchOptions,
-				headers: {
-					...fetchOptions.headers,
-					Range: `bytes=${ start }-${ end }`,
-				},
-			} );
+			const { buffer } = await this._fetchRange( this._octreeUrl, Number( node.byteOffset ), Number( node.byteSize ), fetchOptions );
+			return buffer;
 
 		} else if ( this._inlineHierarchy ) {
 
